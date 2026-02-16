@@ -43,30 +43,15 @@ DEFAULT_MODE = "camera"
 
 client = genai.Client(http_options={"api_version": "v1alpha"}, api_key=os.getenv("GEMINI_API_KEY"))
 
-tools = [
-    types.Tool(google_search=types.GoogleSearch()),
-]
-
-# While Gemini 2.0 Flash is in experimental preview mode, only one of AUDIO or
-# TEXT may be passed here.
-CONFIG = types.LiveConnectConfig(
-    response_modalities=[
-        types.Modality.AUDIO,
-    ],
-    speech_config=types.SpeechConfig(
-        voice_config=types.VoiceConfig(
-            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Leda")
-        )
-    ),
-    tools=types.ToolListUnion(tools),
-)
+DEFAULT_VOICE_NAME = "Leda"
 
 pya = pyaudio.PyAudio()
 
 
 class AudioLoop:
-    def __init__(self, video_mode=DEFAULT_MODE):
+    def __init__(self, video_mode=DEFAULT_MODE, config=None):
         self.video_mode = video_mode
+        self.config = config
 
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue(maxsize=5)
@@ -231,7 +216,7 @@ class AudioLoop:
     async def run(self):
         try:
             async with (
-                client.aio.live.connect(model=MODEL, config=CONFIG) as session,
+                client.aio.live.connect(model=MODEL, config=self.config) as session,
                 asyncio.TaskGroup() as tg,
             ):
                 self.session = session
@@ -263,6 +248,23 @@ class AudioLoop:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--assistant",
+        type=str,
+        default="",
+        help="System instruction to define your assistant behavior/persona.",
+    )
+    parser.add_argument(
+        "--voice",
+        type=str,
+        default=DEFAULT_VOICE_NAME,
+        help="Gemini Live prebuilt voice name for spoken responses.",
+    )
+    parser.add_argument(
+        "--disable-search",
+        action="store_true",
+        help="Disable the built-in Google Search tool.",
+    )
+    parser.add_argument(
         "--mode",
         type=str,
         default=DEFAULT_MODE,
@@ -270,5 +272,25 @@ if __name__ == "__main__":
         choices=["camera", "screen", "none"],
     )
     args = parser.parse_args()
-    main = AudioLoop(video_mode=args.mode)
+
+    tools = []
+    if not args.disable_search:
+        tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+    # While Gemini 2.0 Flash is in experimental preview mode, only one of AUDIO or
+    # TEXT may be passed here.
+    config = types.LiveConnectConfig(
+        response_modalities=[
+            types.Modality.AUDIO,
+        ],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=args.voice)
+            )
+        ),
+        tools=types.ToolListUnion(tools) if tools else None,
+        system_instruction=args.assistant or None,
+    )
+
+    main = AudioLoop(video_mode=args.mode, config=config)
     asyncio.run(main.run())
